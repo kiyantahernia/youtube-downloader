@@ -40,13 +40,16 @@ jobs:
       - name: 📁 Create videos directory
         run: mkdir -p videos
 
-      - name: 🍪 Setup cookies for YouTube
+      - name: 🍪 Setup cookies
+        env:
+          COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
         run: |
-          # استفاده از cookies از GitHub Actions برای دور زدن bot detection
-          cat > cookies.txt << 'EOF'
-          # Netscape HTTP Cookie File
-          .youtube.com	TRUE	/	TRUE	0	CONSENT	YES+
-          EOF
+          if [ -n "$COOKIES" ]; then
+            echo "$COOKIES" > cookies.txt
+          else
+            # اگر cookies نداریم، یک فایل خالی بسازیم
+            touch cookies.txt
+          fi
 
       - name: 📥 Download video
         run: |
@@ -55,7 +58,6 @@ jobs:
           URL="${{ github.event.inputs.video_url }}"
           SUBTITLE="${{ github.event.inputs.download_subtitle }}"
           
-          # تبدیل کیفیت به format مناسب
           case $QUALITY in
             "360p") FORMAT="bestvideo[height<=360]+bestaudio/best[height<=360]" ;;
             "480p") FORMAT="bestvideo[height<=480]+bestaudio/best[height<=480]" ;;
@@ -64,11 +66,17 @@ jobs:
             *) FORMAT="best" ;;
           esac
           
-          # دانلود با cookies
+          # دانلود با تنظیمات بهتر برای دور زدن bot detection
+          OPTS="--no-check-certificates --user-agent 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'"
+          
+          if [ -s ../cookies.txt ]; then
+            OPTS="$OPTS --cookies ../cookies.txt"
+          fi
+          
           if [ "$SUBTITLE" = "true" ]; then
-            yt-dlp --cookies ../cookies.txt -f "$FORMAT" --merge-output-format mp4 --write-auto-sub --sub-lang fa,en -o "%(title)s.%(ext)s" "$URL"
+            yt-dlp $OPTS -f "$FORMAT" --merge-output-format mp4 --write-auto-sub --sub-lang fa,en -o "%(title)s.%(ext)s" "$URL"
           else
-            yt-dlp --cookies ../cookies.txt -f "$FORMAT" --merge-output-format mp4 -o "%(title)s.%(ext)s" "$URL"
+            yt-dlp $OPTS -f "$FORMAT" --merge-output-format mp4 -o "%(title)s.%(ext)s" "$URL"
           fi
 
       - name: 📝 Create README
@@ -91,8 +99,8 @@ jobs:
           cd videos
           for file in *.mp4; do
             if [ -f "$file" ]; then
-              SIZE=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file")
-              if [ $SIZE -gt 94371840 ]; then  # 90MB
+              SIZE=$(stat -c%s "$file" 2>/dev/null || stat -f%z "$file")
+              if [ $SIZE -gt 94371840 ]; then
                 echo "Splitting $file..."
                 zip -s 45m "${file}.zip" "$file"
                 rm "$file"
@@ -105,5 +113,5 @@ jobs:
           git config user.name "GitHub Actions Bot"
           git config user.email "actions@github.com"
           git add videos/
-          git commit -m "📥 Downloaded: ${{ github.event.inputs.video_url }}"
+          git commit -m "📥 Downloaded: ${{ github.event.inputs.quality }} - $(date)"
           git push
