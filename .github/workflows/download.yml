@@ -1,0 +1,91 @@
+name: Download YouTube Video
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: 'لینک ویدیو یوتیوب'
+        required: true
+        type: string
+      quality:
+        description: 'کیفیت ویدیو'
+        required: true
+        type: choice
+        options:
+          - '360p'
+          - '480p'
+          - '720p'
+          - '1080p'
+        default: '720p'
+      download_subtitle:
+        description: 'دانلود زیرنویس؟'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-pip ffmpeg
+          pip3 install -U yt-dlp
+          
+      - name: Create videos directory
+        run: mkdir -p videos
+        
+      - name: Download video
+        run: |
+          cd videos
+          
+          case "${{ inputs.quality }}" in
+            "360p") FORMAT="bestvideo[height<=360]+bestaudio/best[height<=360]" ;;
+            "480p") FORMAT="bestvideo[height<=480]+bestaudio/best[height<=480]" ;;
+            "720p") FORMAT="bestvideo[height<=720]+bestaudio/best[height<=720]" ;;
+            "1080p") FORMAT="bestvideo[height<=1080]+bestaudio/best[height<=1080]" ;;
+            *) FORMAT="best" ;;
+          esac
+          
+          if [ "${{ inputs.download_subtitle }}" = "true" ]; then
+            yt-dlp -f "$FORMAT" --merge-output-format mp4 --write-auto-sub --sub-lang fa,en "${{ inputs.video_url }}"
+          else
+            yt-dlp -f "$FORMAT" --merge-output-format mp4 "${{ inputs.video_url }}"
+          fi
+          
+      - name: Generate README
+        run: |
+          echo "# Downloaded Videos" > videos/README.md
+          echo "" >> videos/README.md
+          echo "**تاریخ دانلود:** $(date)" >> videos/README.md
+          echo "**لینک ویدیو:** ${{ inputs.video_url }}" >> videos/README.md
+          echo "**کیفیت:** ${{ inputs.quality }}" >> videos/README.md
+          echo "" >> videos/README.md
+          ls -lh videos/ >> videos/README.md
+          
+      - name: Split large files
+        run: |
+          cd videos
+          for file in *.mp4; do
+            if [ -f "$file" ]; then
+              SIZE=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file")
+              if [ $SIZE -gt 94371840 ]; then
+                echo "Splitting $file..."
+                zip -s 45m "${file}.zip" "$file"
+                rm "$file"
+              fi
+            fi
+          done
+          
+      - name: Commit and push
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add videos/
+          git commit -m "Add downloaded video - $(date)"
+          git push
