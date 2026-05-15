@@ -1,14 +1,14 @@
-name: Download YouTube Video
+name: 📥 YouTube Video Downloader
 
 on:
   workflow_dispatch:
     inputs:
       video_url:
-        description: 'لینک ویدیو یوتیوب'
+        description: '🔗 لینک ویدیو یوتیوب'
         required: true
         type: string
       quality:
-        description: 'کیفیت ویدیو'
+        description: '🎬 کیفیت ویدیو'
         required: true
         type: choice
         options:
@@ -18,7 +18,7 @@ on:
           - '1080p'
         default: '720p'
       download_subtitle:
-        description: 'دانلود زیرنویس؟'
+        description: '📝 دانلود زیرنویس؟'
         required: false
         type: boolean
         default: false
@@ -28,23 +28,35 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        
-      - name: Install dependencies
+      - name: 📦 Checkout repository
+        uses: actions/checkout@v3
+
+      - name: 🔧 Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y python3-pip ffmpeg
           pip3 install -U yt-dlp
-          
-      - name: Create videos directory
+
+      - name: 📁 Create videos directory
         run: mkdir -p videos
-        
-      - name: Download video
+
+      - name: 🍪 Setup cookies for YouTube
+        run: |
+          # استفاده از cookies از GitHub Actions برای دور زدن bot detection
+          cat > cookies.txt << 'EOF'
+          # Netscape HTTP Cookie File
+          .youtube.com	TRUE	/	TRUE	0	CONSENT	YES+
+          EOF
+
+      - name: 📥 Download video
         run: |
           cd videos
+          QUALITY="${{ github.event.inputs.quality }}"
+          URL="${{ github.event.inputs.video_url }}"
+          SUBTITLE="${{ github.event.inputs.download_subtitle }}"
           
-          case "${{ inputs.quality }}" in
+          # تبدیل کیفیت به format مناسب
+          case $QUALITY in
             "360p") FORMAT="bestvideo[height<=360]+bestaudio/best[height<=360]" ;;
             "480p") FORMAT="bestvideo[height<=480]+bestaudio/best[height<=480]" ;;
             "720p") FORMAT="bestvideo[height<=720]+bestaudio/best[height<=720]" ;;
@@ -52,40 +64,46 @@ jobs:
             *) FORMAT="best" ;;
           esac
           
-          if [ "${{ inputs.download_subtitle }}" = "true" ]; then
-            yt-dlp -f "$FORMAT" --merge-output-format mp4 --write-auto-sub --sub-lang fa,en "${{ inputs.video_url }}"
+          # دانلود با cookies
+          if [ "$SUBTITLE" = "true" ]; then
+            yt-dlp --cookies ../cookies.txt -f "$FORMAT" --merge-output-format mp4 --write-auto-sub --sub-lang fa,en -o "%(title)s.%(ext)s" "$URL"
           else
-            yt-dlp -f "$FORMAT" --merge-output-format mp4 "${{ inputs.video_url }}"
+            yt-dlp --cookies ../cookies.txt -f "$FORMAT" --merge-output-format mp4 -o "%(title)s.%(ext)s" "$URL"
           fi
-          
-      - name: Generate README
+
+      - name: 📝 Create README
         run: |
-          echo "# Downloaded Videos" > videos/README.md
-          echo "" >> videos/README.md
-          echo "**تاریخ دانلود:** $(date)" >> videos/README.md
-          echo "**لینک ویدیو:** ${{ inputs.video_url }}" >> videos/README.md
-          echo "**کیفیت:** ${{ inputs.quality }}" >> videos/README.md
-          echo "" >> videos/README.md
-          ls -lh videos/ >> videos/README.md
+          cat > videos/README.md << 'EOF'
+          # 📥 Downloaded Videos
           
-      - name: Split large files
+          ## ℹ️ Download Info
+          - **URL:** ${{ github.event.inputs.video_url }}
+          - **Quality:** ${{ github.event.inputs.quality }}
+          - **Subtitle:** ${{ github.event.inputs.download_subtitle }}
+          - **Date:** $(date)
+          
+          ## 📦 Files
+          EOF
+          ls -lh videos/ >> videos/README.md
+
+      - name: ✂️ Split large files
         run: |
           cd videos
           for file in *.mp4; do
             if [ -f "$file" ]; then
               SIZE=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file")
-              if [ $SIZE -gt 94371840 ]; then
+              if [ $SIZE -gt 94371840 ]; then  # 90MB
                 echo "Splitting $file..."
                 zip -s 45m "${file}.zip" "$file"
                 rm "$file"
               fi
             fi
           done
-          
-      - name: Commit and push
+
+      - name: 🚀 Commit and push
         run: |
-          git config user.name "GitHub Actions"
+          git config user.name "GitHub Actions Bot"
           git config user.email "actions@github.com"
           git add videos/
-          git commit -m "Add downloaded video - $(date)"
+          git commit -m "📥 Downloaded: ${{ github.event.inputs.video_url }}"
           git push
