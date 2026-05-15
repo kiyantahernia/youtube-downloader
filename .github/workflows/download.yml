@@ -1,4 +1,4 @@
-name: 📥 YouTube Video Downloader
+name: 📥 YouTube Downloader
 
 on:
   workflow_dispatch:
@@ -16,6 +16,7 @@ on:
           - '480p'
           - '720p'
           - '1080p'
+          - 'best'
         default: '720p'
       download_subtitle:
         description: '📝 دانلود زیرنویس؟'
@@ -29,7 +30,7 @@ jobs:
     
     steps:
       - name: 📦 Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: 🔧 Install dependencies
         run: |
@@ -37,84 +38,81 @@ jobs:
           sudo apt-get install -y python3-pip ffmpeg
           pip3 install -U yt-dlp
 
-      - name: 📁 Create videos directory
-        run: mkdir -p videos
-
-      - name: 🍪 Setup cookies
-        env:
-          COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
-        run: |
-          if [ -n "$COOKIES" ]; then
-            echo "$COOKIES" > cookies.txt
-          fi
-
       - name: 📥 Download video
         run: |
-          cd videos
-          QUALITY="${{ github.event.inputs.quality }}"
-          URL="${{ github.event.inputs.video_url }}"
-          SUBTITLE="${{ github.event.inputs.download_subtitle }}"
+          mkdir -p videos
           
-          case $QUALITY in
-            "360p") FORMAT="bestvideo[height<=360]+bestaudio/best[height<=360]" ;;
-            "480p") FORMAT="bestvideo[height<=480]+bestaudio/best[height<=480]" ;;
-            "720p") FORMAT="bestvideo[height<=720]+bestaudio/best[height<=720]" ;;
-            "1080p") FORMAT="bestvideo[height<=1080]+bestaudio/best[height<=1080]" ;;
-            *) FORMAT="best" ;;
-          esac
-          
-          # ساخت دستور yt-dlp
-          CMD="yt-dlp"
-          CMD="$CMD --no-check-certificates"
-          CMD="$CMD --user-agent 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'"
-          
-          if [ -f ../cookies.txt ]; then
-            CMD="$CMD --cookies ../cookies.txt"
+          # تنظیم کیفیت
+          if [ "${{ inputs.quality }}" = "best" ]; then
+            FORMAT="bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+          else
+            HEIGHT="${{ inputs.quality }}"
+            HEIGHT="${HEIGHT%p}"
+            FORMAT="bestvideo[height<=${HEIGHT}][ext=mp4]+bestaudio[ext=m4a]/best[height<=${HEIGHT}][ext=mp4]/best"
           fi
           
-          CMD="$CMD -f '$FORMAT'"
-          CMD="$CMD --merge-output-format mp4"
-          CMD="$CMD -o '%(title)s.%(ext)s'"
-          
-          if [ "$SUBTITLE" = "true" ]; then
-            CMD="$CMD --write-auto-sub --sub-lang fa,en"
+          # تنظیم زیرنویس
+          SUBTITLE_FLAG=""
+          if [ "${{ inputs.download_subtitle }}" = "true" ]; then
+            SUBTITLE_FLAG="--write-auto-sub --sub-lang fa,en --embed-subs"
           fi
           
-          CMD="$CMD '$URL'"
-          
-          eval $CMD
+          # دانلود با fallback و تنظیمات پیشرفته
+          yt-dlp \
+            --no-cache-dir \
+            --no-part \
+            --retries 10 \
+            --fragment-retries 10 \
+            --concurrent-fragments 8 \
+            --buffer-size 16K \
+            --http-chunk-size 10M \
+            --no-check-certificates \
+            --extractor-args "youtube:player_client=web,ios" \
+            --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" \
+            -f "$FORMAT" \
+            $SUBTITLE_FLAG \
+            -o "videos/%(title)s.%(ext)s" \
+            "${{ inputs.video_url }}" || \
+          yt-dlp \
+            --no-cache-dir \
+            --extractor-args "youtube:player_client=android" \
+            -f "$FORMAT" \
+            $SUBTITLE_FLAG \
+            -o "videos/%(title)s.%(ext)s" \
+            "${{ inputs.video_url }}"
 
-      - name: 📝 Create README
-        run: |
-          echo "# 📥 Downloaded Videos" > videos/README.md
-          echo "" >> videos/README.md
-          echo "## ℹ️ Download Info" >> videos/README.md
-          echo "- **URL:** ${{ github.event.inputs.video_url }}" >> videos/README.md
-          echo "- **Quality:** ${{ github.event.inputs.quality }}" >> videos/README.md
-          echo "- **Subtitle:** ${{ github.event.inputs.download_subtitle }}" >> videos/README.md
-          echo "- **Date:** $(date)" >> videos/README.md
-          echo "" >> videos/README.md
-          echo "## 📦 Files" >> videos/README.md
-          ls -lh videos/ >> videos/README.md
-
-      - name: ✂️ Split large files
+      - name: 📊 Check file size and split if needed
         run: |
           cd videos
-          for file in *.mp4; do
+          for file in *; do
             if [ -f "$file" ]; then
-              SIZE=$(stat -c%s "$file" 2>/dev/null || echo 0)
-              if [ $SIZE -gt 94371840 ]; then
-                echo "Splitting $file..."
+              SIZE=$(stat -f%z "$file" 2>/dev/null || stat -c%s "$file")
+              SIZE_MB=$((SIZE / 1024 / 1024))
+              
+              if [ $SIZE_MB -gt 90 ]; then
+                echo "📦 Splitting $file (${SIZE_MB}MB)..."
                 zip -s 45m "${file}.zip" "$file"
                 rm "$file"
               fi
             fi
           done
 
+      - name: 📝 Create download info
+        run: |
+          cd videos
+          echo "# 📥 Downloaded Video" > README.md
+          echo "" >> README.md
+          echo "**URL:** ${{ inputs.video_url }}" >> README.md
+          echo "**Quality:** ${{ inputs.quality }}" >> README.md
+          echo "**Date:** $(date)" >> README.md
+          echo "" >> README.md
+          echo "## 📁 Files:" >> README.md
+          ls -lh >> README.md
+
       - name: 🚀 Commit and push
         run: |
-          git config user.name "GitHub Actions Bot"
+          git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           git add videos/
-          git commit -m "📥 Downloaded: ${{ github.event.inputs.quality }} - $(date +%Y-%m-%d)"
+          git commit -m "📥 Downloaded: ${{ inputs.video_url }}" || echo "No changes"
           git push
