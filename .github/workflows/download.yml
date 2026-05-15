@@ -46,9 +46,6 @@ jobs:
         run: |
           if [ -n "$COOKIES" ]; then
             echo "$COOKIES" > cookies.txt
-          else
-            # اگر cookies نداریم، یک فایل خالی بسازیم
-            touch cookies.txt
           fi
 
       - name: 📥 Download video
@@ -66,32 +63,38 @@ jobs:
             *) FORMAT="best" ;;
           esac
           
-          # دانلود با تنظیمات بهتر برای دور زدن bot detection
-          OPTS="--no-check-certificates --user-agent 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'"
+          # ساخت دستور yt-dlp
+          CMD="yt-dlp"
+          CMD="$CMD --no-check-certificates"
+          CMD="$CMD --user-agent 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'"
           
-          if [ -s ../cookies.txt ]; then
-            OPTS="$OPTS --cookies ../cookies.txt"
+          if [ -f ../cookies.txt ]; then
+            CMD="$CMD --cookies ../cookies.txt"
           fi
+          
+          CMD="$CMD -f '$FORMAT'"
+          CMD="$CMD --merge-output-format mp4"
+          CMD="$CMD -o '%(title)s.%(ext)s'"
           
           if [ "$SUBTITLE" = "true" ]; then
-            yt-dlp $OPTS -f "$FORMAT" --merge-output-format mp4 --write-auto-sub --sub-lang fa,en -o "%(title)s.%(ext)s" "$URL"
-          else
-            yt-dlp $OPTS -f "$FORMAT" --merge-output-format mp4 -o "%(title)s.%(ext)s" "$URL"
+            CMD="$CMD --write-auto-sub --sub-lang fa,en"
           fi
+          
+          CMD="$CMD '$URL'"
+          
+          eval $CMD
 
       - name: 📝 Create README
         run: |
-          cat > videos/README.md << 'EOF'
-          # 📥 Downloaded Videos
-          
-          ## ℹ️ Download Info
-          - **URL:** ${{ github.event.inputs.video_url }}
-          - **Quality:** ${{ github.event.inputs.quality }}
-          - **Subtitle:** ${{ github.event.inputs.download_subtitle }}
-          - **Date:** $(date)
-          
-          ## 📦 Files
-          EOF
+          echo "# 📥 Downloaded Videos" > videos/README.md
+          echo "" >> videos/README.md
+          echo "## ℹ️ Download Info" >> videos/README.md
+          echo "- **URL:** ${{ github.event.inputs.video_url }}" >> videos/README.md
+          echo "- **Quality:** ${{ github.event.inputs.quality }}" >> videos/README.md
+          echo "- **Subtitle:** ${{ github.event.inputs.download_subtitle }}" >> videos/README.md
+          echo "- **Date:** $(date)" >> videos/README.md
+          echo "" >> videos/README.md
+          echo "## 📦 Files" >> videos/README.md
           ls -lh videos/ >> videos/README.md
 
       - name: ✂️ Split large files
@@ -99,7 +102,7 @@ jobs:
           cd videos
           for file in *.mp4; do
             if [ -f "$file" ]; then
-              SIZE=$(stat -c%s "$file" 2>/dev/null || stat -f%z "$file")
+              SIZE=$(stat -c%s "$file" 2>/dev/null || echo 0)
               if [ $SIZE -gt 94371840 ]; then
                 echo "Splitting $file..."
                 zip -s 45m "${file}.zip" "$file"
@@ -113,5 +116,5 @@ jobs:
           git config user.name "GitHub Actions Bot"
           git config user.email "actions@github.com"
           git add videos/
-          git commit -m "📥 Downloaded: ${{ github.event.inputs.quality }} - $(date)"
+          git commit -m "📥 Downloaded: ${{ github.event.inputs.quality }} - $(date +%Y-%m-%d)"
           git push
